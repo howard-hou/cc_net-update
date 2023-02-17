@@ -10,6 +10,7 @@ import logging
 import re
 import tempfile
 import time
+import math
 import urllib.request
 from pathlib import Path
 from typing import ContextManager, Iterable, Iterator, List, Optional, Sequence
@@ -20,7 +21,8 @@ from bs4 import BeautifulSoup  # type: ignore
 
 from cc_net import jsonql
 
-WET_URL_ROOT = "https://commoncrawl.s3.amazonaws.com"
+#WET_URL_ROOT = "https://commoncrawl.s3.amazonaws.com"
+WET_URL_ROOT = "https://data.commoncrawl.org"
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,22 @@ def ls():
         print(dump, "->", cc_wet_paths_url(dump))
 
 
+def parse_header(headers: List[str]) -> Optional[dict]:
+    d = dict(warc_type=None, url=None, date=None, digest=None, length=None)
+    for header in headers:
+        if "WARC-Type" in header:
+            d["warc_type"] = header.split()[1]
+        if "WARC-Target-URI" in header:
+            d["url"] = header.split()[1]
+        if "WARC-Date" in header:
+            d["date"] = header.split()[1]
+        if "WARC-Block-Digest" in header:
+            d["digest"] = header.split()[1]
+        if "Content-Length" in header:
+            d["length"] = header.split()[1]
+    return d
+
+
 def parse_doc(headers: List[str], doc: List[str]) -> Optional[dict]:
     """Headers format is:
     WARC/1.0
@@ -69,14 +87,15 @@ def parse_doc(headers: List[str], doc: List[str]) -> Optional[dict]:
     if not headers or not doc:
         return None
 
+    header_dict = parse_header(headers)
     try:
-        warc_type = headers[1].split()[1]
+        warc_type = header_dict["warc_type"]
         if warc_type != "conversion":
             return None
-        url = headers[2].split()[1]
-        date = headers[3].split()[1]
-        digest = headers[6].split()[1]
-        length = int(headers[8].split()[1])
+        url = header_dict["url"]
+        date = header_dict["date"]
+        digest = header_dict["digest"]
+        length = header_dict["length"]
     except Exception as e:
         logger.warning("Can't parse header:", e, headers, doc)
         return None
@@ -209,6 +228,13 @@ class CCSegmentsReader(Iterable[dict]):
             )
 
 
+
+def split_list(lst, num_splits):
+    """Splits a list into a given number of chunks"""
+    chunk_size = math.ceil(len(lst) / num_splits)
+    return [lst[i:i+chunk_size] for i in range(0, len(lst), chunk_size)]
+
+
 class CCShardReader(CCSegmentsReader):
     def __init__(
         self,
@@ -218,6 +244,8 @@ class CCShardReader(CCSegmentsReader):
         num_segments_per_shard: int = 40,
         min_len: int = 300,
         cache_dir: Path = None,
+        num_splits: int = 1,
+        part_index: int = 0,
     ):
         """Downloads a shard of Common Crawl, and yields dict.
 
@@ -234,13 +262,16 @@ class CCShardReader(CCSegmentsReader):
         assert num_shards > 0 or num_segments_per_shard > 0
         self.num_shards = num_shards
         self.num_segments_per_shard = num_segments_per_shard
+        self.num_splits = num_splits
+        self.part_index = part_index
 
     @property
     def segments(self) -> Sequence[str]:
         # Delaying the initialization allows to delay the looking up of the WET files
         if self._segments:
             return self._segments
-        segments = cc_segments(self.dump, self.cache_dir)
+        all_segments = sorted(cc_segments(self.dump, self.cache_dir))
+        segments = split_list(all_segments, self.num_splits)[self.part_index]
         n = len(segments)
         if self.num_shards < 0:
             self.num_shards = n // self.num_segments_per_shard

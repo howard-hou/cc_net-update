@@ -54,7 +54,9 @@ class Config(NamedTuple):
     output_dir: working directory
     mined_dir: name of the destination folder, full path will be {ouput_dir}/{mined_dir}/{dump_id}
     execution: chose how to parallelize the execution
-    num_shards: number of shards to split the dump
+    num_splits: split dump to small task, num_splits=1 means whole dump
+    part_index: index of the split part
+    num_shards: number of shards to one split
     num_segments_per_shard: allow to download a small portion of CC (eg for tests)
     min_len: remove documents shorter than this (in chars)
     hashes_in_mem: number of shards hashes to use for dedup
@@ -78,6 +80,8 @@ class Config(NamedTuple):
     output_dir: Path = Path("data")
     mined_dir: str = "mined"
     execution: str = "auto"
+    num_splits: int = 1
+    part_index: int = 0
     num_shards: int = 1600
     num_segments_per_shard: int = -1
     metadata: Optional[str] = None
@@ -126,6 +130,8 @@ class Config(NamedTuple):
             num_segments_per_shard=self.num_segments_per_shard,
             min_len=self.min_len,
             cache_dir=dump_cache,
+            num_splits=self.num_splits,
+            part_index=self.part_index,
         )
 
     @classmethod
@@ -156,9 +162,10 @@ class Config(NamedTuple):
         return languages
 
     def get_mined_dir(self, regroup: bool = False) -> Path:
+        dump_dir = f"{self.dump}_split-{self.num_splits}_part-{self.part_index+1}"
         if self.will_split and not regroup:
-            return self.output_dir / f"{self.mined_dir}_split" / self.dump
-        return self.output_dir / self.mined_dir / self.dump
+            return self.output_dir / f"{self.mined_dir}_split" / dump_dir
+        return self.output_dir / self.mined_dir / dump_dir
 
 
 BASE_CONFIG = Config()
@@ -248,8 +255,8 @@ def _transpose(iterable: Sequence[Tuple[Any, ...]], n=-1) -> Tuple[List, ...]:
 
 def hashes(conf: Config) -> List[Path]:
     """Computes hashes for each shard."""
-
-    hashes_dir = conf.output_dir / "hashes" / conf.dump
+    dump_dir = f"{conf.dump}_split-{conf.num_splits}_part-{conf.part_index+1}"
+    hashes_dir = conf.output_dir / "hashes" / dump_dir
     outputs = [hashes_dir / f"{shard:04d}.bin" for shard in range(conf.num_shards)]
     missing_outputs = [(shard, o) for shard, o in enumerate(outputs) if not o.exists()]
 
@@ -612,6 +619,14 @@ def get_main_parser() -> ArgumentParser:
     return p
 
 
+def cleanup_hashes(conf: Config):
+    """Cleanup hashes for each shard."""
+    dump_dir = f"{conf.dump}_split-{conf.num_splits}_part-{conf.part_index+1}"
+    hashes_dir = conf.output_dir / "hashes" / dump_dir
+    for o in hashes_dir.glob("*"):
+        o.unlink()
+
+
 def main(config: str = "base", **config_as_dict: Any) -> None:
     # Use the given 'config' as default value.
     config_base = config
@@ -642,6 +657,9 @@ def main(config: str = "base", **config_as_dict: Any) -> None:
 
     if conf.config_name == "test":
         _validate_test(conf, conf.get_mined_dir(regroup=True))
+
+    if conf.cleanup_after_regroup:
+        cleanup_hashes(conf)
 
 
 if __name__ == "__main__":
