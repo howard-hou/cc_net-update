@@ -1,0 +1,11 @@
+{
+    "task_parallelism": 32,
+    "mine_num_processes": 1,
+    "num_shards": 8000,
+    "num_segments_per_shard": -1,
+    "num_splits": 8,
+    "part_index": 0,
+    "lang_whitelist": ["zh"],
+    "cache_dir": "data/cache_dir",
+    "execution": "local"
+}
