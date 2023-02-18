@@ -97,6 +97,8 @@ class Config(NamedTuple):
     mine_num_processes: int = 16
     target_size: str = "4G"
     cleanup_after_regroup: bool = True
+    cleanup_hashes: bool = True
+    dump_dedup_then_lid: bool = True
     task_parallelism: int = -1
     pipeline: Sequence[str] = DEFAULT_PIPELINE
     experiments: Sequence[str] = []
@@ -355,6 +357,17 @@ def _get_segment(tmp_output: Path, doc: dict) -> str:
     segment: str = doc["cc_segment"].split("/")[-1]
     return str(tmp_output / segment.replace(".warc.wet.gz", ".json.gz"))
 
+def _clean_shard_cache(segments, conf):
+    if conf.cache_dir:
+        dump_cache = conf.cache_dir / conf.dump
+    else:
+        return
+    # cleanup shard segment cache
+    for segment in segments:
+        segment = Path(segment)
+        cache_segment = dump_cache / segment.name
+        cache_segment.unlink()
+
 
 def _mine_shard(conf: Config, hashes: List[Path], shard: int, output: Path) -> str:
     assert conf.pipeline
@@ -434,6 +447,23 @@ def _mine_shard(conf: Config, hashes: List[Path], shard: int, output: Path) -> s
         split_fn=lambda doc: _get_segment(tmp_output, doc), mkdir=True
     )
 
+    if conf.dump_dedup_then_lid:
+        mined_dir = conf.get_mined_dir(regroup=True)
+        mined_dir.mkdir(parents=True, exist_ok=True)
+        dump_output = mined_dir / f"{output.name}.json.gz"
+        dump_tmp_output = tmp(dump_output)
+        dedup_then_lid_pipe = (steps[s] for s in ["dedup", "lid"])
+        jsonql.run_pipes(
+            *dedup_then_lid_pipe,
+            inputs=cc_shard,
+            processes=conf.mine_num_processes,
+            chunksize=100,
+            # writing to the final mined dir
+            output=dump_tmp_output,
+        )
+        finalize(dump_tmp_output, dump_output)
+        print(f"dedup then lid dump to {dump_output}")
+
     pipeline = filter(None, (steps[s] for s in conf.pipeline))
 
     jsonql.run_pipes(
@@ -445,6 +475,8 @@ def _mine_shard(conf: Config, hashes: List[Path], shard: int, output: Path) -> s
         output=tmp_output if not conf.will_split else None,
     )
     finalize(tmp_output, output)
+    #
+    _clean_shard_cache(cc_shard.segments, conf)
     return f"Mined {output}"
 
 
@@ -658,7 +690,7 @@ def main(config: str = "base", **config_as_dict: Any) -> None:
     if conf.config_name == "test":
         _validate_test(conf, conf.get_mined_dir(regroup=True))
 
-    if conf.cleanup_after_regroup:
+    if conf.cleanup_hashes:
         cleanup_hashes(conf)
 
 

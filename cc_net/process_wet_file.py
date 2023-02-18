@@ -59,6 +59,8 @@ def ls():
 def parse_header(headers: List[str]) -> Optional[dict]:
     d = dict(warc_type=None, url=None, date=None, digest=None, length=None)
     for header in headers:
+        if len(header.split()) != 2:
+            continue
         if "WARC-Type" in header:
             d["warc_type"] = header.split()[1]
         if "WARC-Target-URI" in header:
