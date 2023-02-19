@@ -6,6 +6,5 @@
     "num_splits": 8,
     "part_index": 0,
     "lang_whitelist": ["zh"],
-    "cache_dir": "data/cache_dir",
     "execution": "local"
 }

@@ -273,8 +273,14 @@ def hashes(conf: Config) -> List[Path]:
 
     # Wait a bit so that files appears on the disk.
     time.sleep(20)
-    assert all(o.exists() for o in outputs)
-    return outputs
+    # if success rate lower than 90%, retry
+    if sum(o.exists() for o in outputs) / len(outputs) <= 0.9:
+        missing_outputs = [(shard, o) for shard, o in enumerate(outputs) if not o.exists()]
+        ex(_hashes_shard, repeat(conf), *_transpose(missing_outputs))
+
+    success_rate = sum(o.exists() for o in outputs) / len(outputs)
+    print(f"hash stage success rate: {success_rate}")
+    return [o for o in outputs if o.exists()]
 
 
 def _hashes_shard(conf: Config, shard: int, output: Path):
