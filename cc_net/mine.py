@@ -293,6 +293,16 @@ def _hashes_shard(conf: Config, shard: int, output: Path):
     return f"Hashed {output}"
 
 
+def local_hashes_shard(conf: Config, cc_shard: process_wet_file.CCShardReader, output: Path):
+    tmp_output = tmp(output)
+    jsonql.run_pipes(
+        dedup.HashesCollector(field="raw_content", output=tmp_output),
+        inputs=cc_shard,
+    )
+    finalize(tmp_output, output)
+    return f"Hashed {output}"
+
+
 HASHES_IN_MEM = [0, 1, 2, 5, 10, 20, 50, 100, 200, 400]
 
 
@@ -345,13 +355,7 @@ def mine(conf: Config) -> List[Path]:
     )
 
     # Compute hashes firsts.
-    if "dedup" in conf.pipeline:
-        hashes_groups = list(jsonql.grouper(hashes(conf), conf.hash_in_mem))
-        hashes_files: Iterable[List[Path]] = [
-            hashes_groups[shard // conf.hash_in_mem] for shard, o in missing_outputs
-        ]
-    else:
-        hashes_files = repeat([])
+    hashes_files = repeat([])
 
     ex(_mine_shard, repeat(conf), hashes_files, *_transpose(missing_outputs))
 
@@ -383,13 +387,25 @@ def _mine_shard(conf: Config, hashes: List[Path], shard: int, output: Path) -> s
         hashes_in_mem = shard
         hashes = hashes[: HASHES_IN_MEM[hashes_in_mem]]
         shard = 0
+    mined_dir = conf.get_mined_dir()
     cc_shard = conf.get_cc_shard(shard)
+
+    # local dedup
+    dump_dir = f"{conf.dump}_split-{conf.num_splits}_part-{conf.part_index+1}"
+    hash_dir = conf.output_dir / "hashes" / dump_dir
+    hash_dir.mkdir(parents=True, exist_ok=True)
+    hash_output = hash_dir / f"{shard:04d}.bin"
+    if not hash_output.exists():
+        local_hashes_shard(conf, cc_shard, hash_output)
+    hashes = [hash_output]
+
 
     steps: Dict[str, Optional[jsonql.Transformer]] = {}
     lang_id = Path("bin") / "lid.bin"
     steps["lid_before_dedup"] = split_by_lang.Classifier(
         model=lang_id, field="raw_content", out_field="lid_before_dedup", top=5
     )
+    # make sure only one of dedup was used
     steps["dedup"] = dedup.DuplicatesRemover(field="raw_content", hashes_files=hashes)
 
     steps["lid"] = split_by_lang.Classifier(
@@ -483,6 +499,7 @@ def _mine_shard(conf: Config, hashes: List[Path], shard: int, output: Path) -> s
     finalize(tmp_output, output)
     #
     _clean_shard_cache(cc_shard.segments, conf)
+    hash_output.unlink()
     return f"Mined {output}"
 
 
