@@ -1,3 +1,12 @@
+# update 2023
+This update mainly addresses the following issues:
+
+1. The incompatibility issue with the new format in 2023. After simple testing, it can now adapt to the latest data format.
+2. The low-resource issue, allowing cc-net to run on a single machine without a cluster.
+3. Added the `num_splits` parameter, which allows you to divide the entire dataset into `num_splits` parts, with each part further divided into `num_shards`. This enables you to process only a portion of the current month's data at a time.
+4. Changed the deduplication logic, no longer performing global deduplication (too resource-intensive), but using local deduplication instead. Global deduplication requires each segment to be downloaded three times, while local deduplication only downloads each segment once, reducing bandwidth usage.
+5. Added a cleanup logic to minimize the use of running memory and disk space.
+
 # cc_net
 
 Tools to download and clean Common Crawl as introduced in our paper [CCNet](https://arxiv.org/abs/1911.00359).
